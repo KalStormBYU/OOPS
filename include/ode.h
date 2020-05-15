@@ -237,6 +237,9 @@ class ODE{
      * Dump all of the current data to a .csv file.
      */
     void dump_csv(char *name, double t, unsigned int var);
+
+//    void outputVTKScalar(char *name, double t, int iter, unsigned int var);
 };
+
 
 #endif

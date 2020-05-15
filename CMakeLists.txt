@@ -126,3 +126,17 @@ target_include_directories(MultiGridTest PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/incl
 # target_link_libraries(Fluid ${EXTRA_LIBS})
 # target_include_directories(Fluid PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 #                            ${CMAKE_CURRENT_SOURCE_DIR}/fluid/include ${PROJECT_SOURCE_DIR})
+
+set(WAVE_INCLUDE_FILES
+    simplewave/include/wave.h
+    )
+set(TEST_SOURCE_FILES
+    simplewave/src/wave.cpp
+    simplewave/src/main.cpp
+    )
+
+set(SOURCE_FILES ${GRID_SOURCE_FILES} ${GRID_INCLUDE_FILES} ${TEST_SOURCE_FILES} ${WAVE_INCLUDE_FILES})
+add_executable(Wave ${SOURCE_FILES})
+target_link_libraries(Wave ${EXTRA_LIBS})
+target_include_directories(Wave PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+                            ${CMAKE_CURRENT_SOURCE_DIR}/simplewave/include ${PROJECT_SOURCE_DIR})
