@@ -4,13 +4,17 @@
 #include <iostream>
 #include <cstdio>
 #include <output.h>
+#include <memory>
 
 ODE::ODE(const unsigned int n, const unsigned int id) : nEqs(n), pId(id){
   domain = nullptr;
-  params = nullptr;
   solver = nullptr;
   max_dx = 0.0;
   interpolator = nullptr;
+  time = 0.0;
+  for(unsigned int i = 0; i < nEqs; i++){
+    evolutionIndices.push_back(i);
+  }
 }
 
 ODE::~ODE(){
@@ -28,6 +32,36 @@ Result ODE::reallocateData(){
     data.emplace(nEqs, solver->getNStages(), *it);
   }
 
+  for(auto it = domain->getGrids().begin(); it != domain->getGrids().end(); ++it){
+    max_dx = (it->getSpacing() > max_dx) ? it->getSpacing() : max_dx;
+    fieldData.emplace(std::unique_ptr<FieldMap>(new FieldMap(*it, fieldList)));
+  }
+
+  return SUCCESS;
+}
+// }}}
+
+// addField {{{
+Result ODE::addField(std::string name, unsigned int eqs, bool isEvolved) {
+  if(fieldList.find(name) != fieldList.end()){
+    return FIELD_EXISTS;
+  }
+  else{
+    unsigned int stages = (isEvolved ? solver->getNStages() : 0);
+    fieldList.insert({name, FieldInfo(name, eqs, stages)});
+  }
+  return SUCCESS;
+}
+// }}}
+
+// removeField {{{
+Result ODE::removeField(std::string name){
+  if(fieldList.find(name) == fieldList.end()){
+    return UNRECOGNIZED_FIELD;
+  }
+  else{
+    fieldList.erase(name);
+  }
   return SUCCESS;
 }
 // }}}
@@ -59,8 +93,12 @@ Result ODE::setInterpolator(Interpolator* interp){
 
 // evolveStep {{{
 Result ODE::evolveStep(double dt){
+  // Keep track of the current time as well as the original time.
+  double old_time = time;
+
   // Loop over every stage for the solver.
   for(unsigned int i = 0; i < solver->getNStages(); i++){
+    solver->setStageTime(old_time, time, dt, i);
     // Loop over every data set in the domain.
     for(auto it = data.begin(); it != data.end(); ++it){
       //solver->calcStage(rhs, it->getData(), it->getIntermediateData(), (it->getWorkData())[i],
@@ -77,33 +115,16 @@ Result ODE::evolveStep(double dt){
     doAfterBoundaries(true);
   }
 
+  time = old_time + dt;
+
   for(auto it = data.begin(); it != data.end(); ++it){
-    solver->combineStages(it->getWorkData(), it->getData(), it->getGrid(), dt, nEqs);
+    solver->combineStages(it->getWorkData(), it->getData(), it->getGrid(), dt, evolutionIndices);
   }
   doAfterStage(false);
   performGridExchange();
   doAfterExchange(false);
   applyBoundaries(false);
   doAfterBoundaries(false);
-
-  // Loop over all the data sets.
-  /*for(auto it = data.begin(); it != data.end(); ++it){
-    // Figure out how many time steps we need to take for this grid.
-    unsigned int N = (unsigned int) round(max_dx/it->getGrid().getSpacing());
-    double dt_i = dt/N;
-    for(int t = 0; t < N; t++){
-      for(unsigned int i = 0; i < solver->getNStages(); i++){
-        solver->calcStage(this, it->getData(), it->getIntermediateData(), (it->getWorkData())[i],
-                          it->getGrid(), dt_i, i);
-        applyBoundaries();
-      }
-
-      solver->combineStages(it->getWorkData(), it->getData(), it->getGrid(), dt_i, nEqs);
-      applyBoundaries();
-    }
-  }
-
-  performGridExchange();*/
 
   return SUCCESS;
 }
@@ -242,18 +263,6 @@ void ODE::interpolateRight(const SolverData& datal, const SolverData& datar){
 }
 // }}}
 
-// setParameters {{{
-Result ODE::setParameters(Parameters *p){
-  if(p->getId() == pId){
-    params = p;
-    return SUCCESS;
-  }
-  else{
-    return UNRECOGNIZED_PARAMS;
-  }
-}
-// }}}
-
 // output_frame {{{
 void ODE::output_frame(char* name, double t, unsigned int var){
   
@@ -273,7 +282,7 @@ void ODE::output_frame(char* name, double t, unsigned int var){
     // output procedure.
     if(shp > size){
       if(x != nullptr){
-        delete x;
+        delete[] x;
       }
       size = shp*2;
       x = new double[size];
@@ -286,7 +295,34 @@ void ODE::output_frame(char* name, double t, unsigned int var){
     double **u = it->getData();
     output::output_data(name, u[var] + nb, x + nb, shp - 2*nb, t);
   }
-  delete x;
+  delete[] x;
+}
+// }}}
+
+// output_field {{{
+void ODE::output_field(std::string field, char* name, double t, unsigned int var){
+  unsigned int nb = domain->getGhostPoints();
+  unsigned int size = 0;
+  double *x = nullptr;
+  for(auto it = fieldData.begin(); it != fieldData.end(); ++it){
+    auto evol = (**it)[field];
+    unsigned int shp = evol->getGrid().getSize();
+    if(shp > size){
+      if(x != nullptr){
+        delete[] x;
+      }
+      size = shp*2;
+      x = new double[size];
+    }
+    const double *points = evol->getGrid().getPoints();
+    for(unsigned int i = 0; i < shp; i++){
+      x[i] = points[i];
+    }
+
+    double **u = evol->getData();
+    output::output_data(name, u[var] + nb, x + nb, shp - 2*nb, t);
+  }
+  delete[] x;
 }
 // }}}
 
@@ -318,18 +354,13 @@ void ODE::dump_csv(char* name, double t, unsigned int var){
   fclose(f);
 }
 
-/*void ODE::outputVTKScalar(char *name, double t, int iter, unsigned int var)
-{
-    unsigned int nb = domain->getGhostPoints();
-
-    for(auto it = data.begin(); it != data.end(); ++it)
-    {
-        unsigned int shp = it->getGrid().getSize();
-        const double *points = it->getGrid().getPoints();
-        double **u = it->getData();
-        output::output_vtk(name, u[var] + nb, points + nb, shp -2*nb, t, iter);
-    }
-} */
-
+// getTime {{{
+double ODE::getTime(){
+  return time;
+}
 // }}}
 
+// setTime {{{
+void ODE::setTime(double t){
+  time = t;
+}

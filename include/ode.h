@@ -5,10 +5,37 @@
 #include "domain.h"
 #include "solver.h"
 #include "rk4.h"
+#include "odedata.h"
 #include "solverdata.h"
 #include "parameters.h"
 #include "interpolator.h"
 #include <set>
+#include <map>
+#include <string>
+#include <vector>
+#include <fieldmap.h>
+
+// FieldInfo {{{
+/**
+ * A struct to help us keep track of all the fields when we reallocate
+ * data.
+ */
+struct FieldInfo{
+  std::string name;
+  unsigned int nEqs;
+  unsigned int nStages;
+  FieldInfo(std::string n, unsigned int eqs, unsigned int stages){
+    name = n;
+    nEqs = eqs;
+    nStages = stages;
+  }
+  FieldInfo(const FieldInfo& other){
+    name = std::string(other.name);
+    nEqs = other.nEqs;
+    nStages = other.nStages;
+  }
+};
+// }}}
 
 /**
  * An abstract class representing a system of ODEs. Despite the name, which
@@ -16,6 +43,13 @@
  * PDEs, too.
  */
 class ODE{
+  public:
+
+  private:
+    /**
+     * A list of all the fields and their info.
+     */
+    std::map<std::string, FieldInfo> fieldList;
   protected:
     /**
      * The number of independent equations in this system.
@@ -28,11 +62,6 @@ class ODE{
     const unsigned int pId;
 
     /**
-     * The parameters for this system of equations.
-     */
-    Parameters *params;
-
-    /**
      * The domain to solve this ODE on.
      */
     Domain *domain;
@@ -41,6 +70,16 @@ class ODE{
      * The data for this domain.
      */
     std::set<SolverData> data;
+
+    /**
+     * The data for all fields on this domain.
+     */
+    std::set<std::unique_ptr<FieldMap>> fieldData;
+
+    /**
+     * The indices of the variables that should be evolved.
+     */
+    std::vector<unsigned int> evolutionIndices;
 
     /**
      * The solver to use for this system of ODEs.
@@ -57,6 +96,11 @@ class ODE{
      * The maximum grid spacing on the domain in question.
      */
     double max_dx;
+
+    /**
+     * The evolution time.
+     */
+    double time;
 
     /**
      * Because everything is dynamically allocated, copying an ODE object
@@ -100,6 +144,22 @@ class ODE{
     virtual void doAfterBoundaries(bool intermediate){};
 
     /**
+     * Add a new field to the ODE object. The reallocateData() function
+     * needs to be called for any memory to be updated.
+     */
+    Result addField(std::string name, unsigned int eqs, bool isEvolved);
+
+    /**
+     * Remove an field from the ODE object.
+     */
+    Result removeField(std::string name);
+
+    /**
+     * Check if a particular field exists.
+     */
+    bool hasField(std::string name);
+
+    /**
      * Clear and reallocate all the data.
      */
     Result reallocateData();
@@ -131,13 +191,13 @@ class ODE{
     void interpolateRight(const SolverData &datal, const SolverData &datar);
       
   public:
+
     /**
      * Since this is an abstract class, the only thing the constructor needs
      * to do is set the number of equations in the ODE and the id for the
      * expected parameter id.
      */
     /*ODE(const unsigned int n, const unsigned int id) : nEqs(n), pId(id) {
-      params = Parameters();
       domain = Domain();
       solver = RK4();
     };*/
@@ -199,15 +259,6 @@ class ODE{
     virtual void rhs(const Grid& grid, double** data, double** dudt) = 0;
 
     /**
-     * Set the Parameters object for this object. The Parameters id must
-     * match what the ODE object has been set to recognize or it returns
-     * an error.
-     * @param p - The parameter object to associate with this ODE.
-     * @returns SUCCESS or UNRECOGNIZED_PARAMS
-     */
-    Result setParameters(Parameters *p);
-
-    /**
      * Get the number of equations in this system.
      */
     inline unsigned int getNEqs() const {
@@ -222,23 +273,32 @@ class ODE{
     }
 
     /**
-     * Get the parameters for this system of ODEs.
-     */
-    inline Parameters *getParameters(){
-      return params;
-    }
-
-    /**
      * Output a frame of one variable in the ODE to the specified .sdf file.
      */
     void output_frame(char *name, double t, unsigned int var);
+
+    /**
+     * Output a frame of one variable in an ODE field to the specified .sdf file.
+     */
+    void output_field(std::string field, char* name, double t, unsigned int var);
 
     /**
      * Dump all of the current data to a .csv file.
      */
     void dump_csv(char *name, double t, unsigned int var);
 
-//    void outputVTKScalar(char *name, double t, int iter, unsigned int var);
+    /**
+     * Get the evolution time.
+     * @returns the current time in the evolution.
+     */
+    double getTime();
+
+    /**
+     * Set the evolution time.
+     * @param t - The evolution time that the ODE should be at.
+     */
+    void setTime(double t);
+
 };
 
 
